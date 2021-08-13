@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Gitlab environment"
+Resources:
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/24
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Project
+          Value: GitLab
+        - Key: Environment
+          Value: Production
+
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref 'Vpc'
+      CidrBlock: 10.1.0.0/28
+      AvailabilityZone: "us-east-1a"
+      Tags:
+        - Key: Project
+          Value: GitLab
+        - Key: Environment
+          Value: Production
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref 'Vpc'
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  VPCIGAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref 'InternetGateway'
+      VpcId: !Ref 'Vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Project
+          Value: GitLab
+        - Key: Environment
+          Value: Production
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId: !Ref Subnet
+      SecurityGroupIds:
+        - !GetAtt 'InstanceSecurityGroup.GroupId'
+      ImageId: ami-0c2b8ca1dad447f8a # Amazon linux 2 AMI in us-east-1
+      InstanceType: t2.micro
+      #InstanceType: t3a.medium #t3a.medium (- ECUs, 2 vCPUs, 2.2 GHz, -, 4 GiB memory, EBS only)
+      KeyName: arieldevoto
+      #      NetworkInterfaces:
+      #        - SubnetId: !Ref 'Subnet'
+      #          AssociatePublicIpAddress: true
+      #          DeviceIndex: 0
+      #          SecurityGroupId:
+      #            - !Ref 'InstanceSecurityGroup'
+      #          GroupSet:
+      #            - !Ref 'InstanceSecurityGroup'
+      Tags:
+        - Key: Project
+          Value: GitLab
+        - Key: Environment
+          Value: Production
+      UserData:
+        Fn::Base64:
+          |
+          #!/bin/bash
+
+          # Update packages
+          apt-get update
+          apt-get install snapd curl
+
+          # Install snap & certbot
+          snap install core
+          snap refresh core
+          snap install --classic certbot
+          ln -s /snap/bin/certbot /usr/bin/certbot
+
+          # Install Docker
+          curl https://get.docker.com | sh
+
+          # Install docker-compose
+          curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      Size: 60
+      AvailabilityZone: !GetAtt 'Ec2Instance.AvailabilityZone'
+
+  MountPoint:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      InstanceId: !Ref Ec2Instance
+      VolumeId: !Ref NewVolume
+      Device: /dev/sdh
